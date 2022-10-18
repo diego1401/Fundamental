@@ -65,9 +65,9 @@ void fillA(vector<Match> matches, FMatrix<float,9,9>& A,FMatrix<float,3,3> N){
             x1 = N(0,0) * matches[index].x1; y1 = N(1,1) * matches[index].y1;
             x2 = N(0,0) * matches[index].x2; y2 = N(1,1)  * matches[index].y2;
 
-            A(i,0) = x1*x2; A(i,1) = y1*x2; A(i,2) = x2;
-            A(i,3) = x1*y2; A(i,4) = y1*y2; A(i,5) = y2;
-            A(i,6) = x1;    A(i,7) = y1;    A(i,8) = 1;
+            A(i,0) = x1*x2; A(i,1) = y2*x1; A(i,2) = x1;
+            A(i,3) = x2*y1; A(i,4) = y1*y2; A(i,5) = y1;
+            A(i,6) = x2;    A(i,7) = y2;    A(i,8) = 1;
         }
     }
 }
@@ -97,7 +97,7 @@ void solvingf(FMatrix<float,9,9> A ,FMatrix<float,3,3>& F){
             F(row,col) = f[col + 3*row];
         }
     }
-    enforeRanktwo(F);
+//    enforeRanktwo(F);
 }
 
 float model_classification(vector<Match> matches, FMatrix<float,3,3> F, vector<int>& currInliers, float distMax){
@@ -108,17 +108,17 @@ float model_classification(vector<Match> matches, FMatrix<float,3,3> F, vector<i
     for(int i=0;i<matches.size();i++){
         x1 = matches[i].x1; y1 = matches[i].y1;
         x2 = matches[i].x2; y2 = matches[i].y2;
+
         xi = {x1,y1,1};
         xi_prime = {x2,y2,1};
         F_t_xi = transpose(F) * xi;
-        d = abs(F_t_xi * xi_prime);
+        d = abs(F_t_xi[0]*xi_prime[0] + F_t_xi[1]*xi_prime[1] + F_t_xi[2]);
         d/= sqrt(F_t_xi[0]*F_t_xi[0] + F_t_xi[1]*F_t_xi[1]);
         if(d <= distMax){
             m ++;
             currInliers.push_back(i);
         }
     }
-
     return (float)m/ (float)matches.size();
     }
 
@@ -130,7 +130,7 @@ float update_Niter(int Niter, float curr_best_ratio,int k){
 }
 // RANSAC algorithm to compute F from point matches (8-point algorithm)
 
-void RANSAC(FMatrix<float,3,3>& bestF, vector<Match>& matches,vector<Match> all,vector<int>& bestInliers){
+void RANSAC(FMatrix<float,3,3>& bestF, vector<Match>& matches,vector<int>& bestInliers){
     vector<int> currInliers;
     const float distMax = 1.5f; // Pixel error for inlier/outlier discrimination
     float Niter=100000; // Adjusted dynamically
@@ -148,9 +148,11 @@ void RANSAC(FMatrix<float,3,3>& bestF, vector<Match>& matches,vector<Match> all,
         // Solving and creating the matrix F
         solvingf(A,F);
         // Retrieve unnormalized F
+        enforeRanktwo(F);
         F = transpose(N) * F * N;
+
         // Perform inlier/outlier classification
-        curr_ratio = model_classification(all, F,currInliers, distMax);
+        curr_ratio = model_classification(matches,F,currInliers, distMax);
 
         if(curr_ratio > curr_best_ratio) {
 
@@ -162,9 +164,11 @@ void RANSAC(FMatrix<float,3,3>& bestF, vector<Match>& matches,vector<Match> all,
             Niter = update_Niter(Niter,curr_best_ratio,k);
 
             bestInliers.clear();
-            copy(currInliers.begin(), currInliers.end(), back_inserter(bestInliers)); // copying into bestInliers
+            bestInliers = currInliers;
+//            copy(currInliers.begin(),currInliers.end(),back_inserter(bestInliers));
 
         }
+
         iteration_number++;
         currInliers.clear();
     }
@@ -174,13 +178,14 @@ void RANSAC(FMatrix<float,3,3>& bestF, vector<Match>& matches,vector<Match> all,
 void leastSquares(FMatrix<float,3,3>& bestF,vector<Match> matches,FMatrix<float,3,3> N){
     Matrix<float> A(matches.size(),9);
     float x1,x2,y1,y2;
+    // Important to normalize here too.
     for(int i=0;i<matches.size();i++){
             x1 = N(0,0) * matches[i].x1; y1 = N(1,1) * matches[i].y1;
             x2 = N(0,0) * matches[i].x2; y2 = N(1,1)  * matches[i].y2;
 
-            A(i,0) = x1*x2; A(i,1) = y1*x2; A(i,2) = x2;
-            A(i,3) = x1*y2; A(i,4) = y1*y2; A(i,5) = y2;
-            A(i,6) = x1;    A(i,7) = y1;    A(i,8) = 1;
+            A(i,0) = x1*x2; A(i,1) = y2*x1; A(i,2) = x1;
+            A(i,3) = x2*y1; A(i,4) = y1*y2; A(i,5) = y1;
+            A(i,6) = x2;    A(i,7) = y2;    A(i,8) = 1;
     }
 
     // variables for svd
@@ -199,20 +204,21 @@ void leastSquares(FMatrix<float,3,3>& bestF,vector<Match> matches,FMatrix<float,
     }
     enforeRanktwo(bestF);
     bestF = transpose(N) * bestF * N;
-}
 
+
+}
 
 // Parameter matches is filtered to keep only inliers as output.
 FMatrix<float,3,3> computeF(vector<Match>& matches) {
     FMatrix<float,3,3> bestF;
     vector<int> bestInliers;
-    int m,iteration_number = 0,k=8;
+    int iteration_number = 0,k=8;
     float values_N[3][3]={{0.001,0,0},
                           {0,0.001,0},
                           {0,0,1}};
     FMatrix<float,3,3> N(values_N);
 
-    RANSAC(bestF,matches,matches,bestInliers);
+    RANSAC(bestF,matches,bestInliers);
     // Updating matches with inliers only
     vector<Match> all=matches;
     matches.clear();
@@ -220,11 +226,7 @@ FMatrix<float,3,3> computeF(vector<Match>& matches) {
         matches.push_back(all[bestInliers[i]]);
 
     // Refining using only inliers
-    RANSAC(bestF,matches,all,bestInliers);
-    matches.clear();
-    for(size_t i=0; i<bestInliers.size(); i++)
-        matches.push_back(all[bestInliers[i]]);
-//    leastSquares(bestF,matches,N);
+    leastSquares(bestF,matches,N);
 
     return bestF;
 }
